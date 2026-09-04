@@ -16,9 +16,24 @@ interface BackendNode {
   model?: string | null
   provider?: string | null
   credential_id?: string | null
+  // Data Source fields
+  source_type?: string | null
+  table?: string | null
+  query?: string | null
+  endpoint?: string | null
+  base_url?: string | null
+  file_name?: string | null
+  filters?: Record<string, string> | null
+  limit?: number | null
+  output_variable?: string | null
   true_node?: string | null
   false_node?: string | null
   next_node?: string | null
+  each_next_node?: string | null
+  done_next_node?: string | null
+  input_variable?: string | null
+  item_variable?: string | null
+  index_variable?: string | null
   position?: { x: number; y: number }
   config?: Partial<FlowNodeConfig>
 }
@@ -65,6 +80,24 @@ function normalizeBackendFlow(raw: BackendFlowResponse): Flow {
           label: 'False',
         })
       }
+      if (node.each_next_node) {
+        derivedEdges.push({
+          id: `e-${node.id}-${node.each_next_node}-each`,
+          source: node.id,
+          target: node.each_next_node,
+          label: 'Each',
+          sourceHandle: 'each',
+        })
+      }
+      if (node.done_next_node) {
+        derivedEdges.push({
+          id: `e-${node.id}-${node.done_next_node}-done`,
+          source: node.id,
+          target: node.done_next_node,
+          label: 'Done',
+          sourceHandle: 'done',
+        })
+      }
       if (Array.isArray(node.options)) {
         node.options.forEach((opt, optIdx) => {
           if (typeof opt === 'object' && opt && opt.next_node) {
@@ -80,7 +113,26 @@ function normalizeBackendFlow(raw: BackendFlowResponse): Flow {
     }
 
     const type = (node.type as NodeType) || 'message'
-    const config: Partial<FlowNodeConfig> = node.config || {}
+    const config: Partial<FlowNodeConfig> = { ...(node.config || {}) }
+
+    // Older loop payloads stored these fields on the backend node. Normalize
+    // them into the frontend config so reopening a saved For Each node does
+    // not silently fall back to the defaults.
+    if (type === 'for_each') {
+      config.input_variable =
+        config.input_variable ?? (node as any).input_variable ?? 'records'
+      config.item_variable =
+        config.item_variable ?? (node as any).item_variable ?? 'current_item'
+      config.index_variable =
+        config.index_variable ?? (node as any).index_variable ?? 'index'
+    }
+
+    // 360dialog is the default WhatsApp provider for this build. Older saved
+    // WhatsApp nodes may not have channel_provider at all.
+    if (type === 'whatsapp') {
+      ;(config as any).channel_provider = (config as any).channel_provider || '360dialog'
+      ;(config as any).dialog_environment = (config as any).dialog_environment || 'sandbox'
+    }
 
     return {
       id: node.id,
@@ -90,6 +142,7 @@ function normalizeBackendFlow(raw: BackendFlowResponse): Flow {
         y: 80 + Math.floor(i / 3) * 220,
       },
       config: {
+        ...config,
         label: config.label || node.id.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
         text: node.message ?? config.text ?? '',
         options: Array.isArray(node.options)
@@ -111,6 +164,21 @@ function normalizeBackendFlow(raw: BackendFlowResponse): Flow {
           type === 'ai' ? 'openai' : ''
         ),
         credential_id: (node as any).credential_id ?? (config as any).credential_id ?? '',
+        // Data Source fields — spread from config above already covers these
+        // (source_type, table, query, endpoint, base_url, file_name, filters,
+        // limit, output_variable); explicit fallbacks here keep top-level
+        // BackendNode fields authoritative if the backend ever returns both.
+        operation: (node as any).operation ?? (config as any).operation ?? 'fetch',
+        source_type: (node as any).source_type ?? (config as any).source_type,
+        table: (node as any).table ?? (config as any).table,
+        query: (node as any).query ?? (config as any).query,
+        endpoint: (node as any).endpoint ?? (config as any).endpoint,
+        base_url: (node as any).base_url ?? (config as any).base_url,
+        file_name: (node as any).file_name ?? (config as any).file_name,
+        filters: (config as any).filters,
+        values: (config as any).values,
+        limit: (node as any).limit ?? (config as any).limit,
+        output_variable: (node as any).output_variable ?? (config as any).output_variable,
       },
     }
   })
@@ -181,6 +249,23 @@ function flowToBackendPayload(flow: Flow) {
         node.config?.provider || 'openai'
       // API keys are transient and must never be written into flow JSON.
       ;(backendNode as any).api_key = undefined
+    } else if (node.type === 'for_each') {
+      const eachEdge =
+        outgoing.find((e) => e.sourceHandle === 'each' || e.label?.toLowerCase() === 'each') ||
+        outgoing[0]
+      const doneEdge =
+        outgoing.find((e) => e.sourceHandle === 'done' || e.label?.toLowerCase() === 'done') ||
+        outgoing[1]
+
+      ;(backendNode as any).input_variable = node.config?.input_variable || 'records'
+      ;(backendNode as any).item_variable = node.config?.item_variable || 'current_item'
+      ;(backendNode as any).index_variable = node.config?.index_variable || 'index'
+      ;(backendNode as any).each_next_node = eachEdge?.target || null
+      ;(backendNode as any).done_next_node = doneEdge?.target || null
+    } else if (node.type === 'data_source') {
+      // Everything the executor needs already lives in `config` (which is
+      // always forwarded as-is), so we only need to chain to the next node.
+      backendNode.next_node = outgoing[0]?.target || null
     } else if (node.type === 'end') {
       backendNode.message = node.config?.text || null
       backendNode.next_node = null
@@ -192,6 +277,7 @@ function flowToBackendPayload(flow: Flow) {
   return {
     flow_id: flow.flow_id,
     nodes,
+    edges: flow.edges || [],
   }
 }
 
@@ -327,6 +413,7 @@ export interface CredentialSummary {
   created_at?: string
   updated_at?: string
   has_api_key?: boolean
+  extra_keys?: string[]
 }
 
 export const credentialsApi = {
@@ -336,7 +423,15 @@ export const credentialsApi = {
     return response.json()
   },
 
-  create: async (data: { name: string; provider: string; api_key: string; api_url?: string }): Promise<CredentialSummary> => {
+  create: async (data: {
+    name: string
+    provider: string
+    api_key?: string
+    api_url?: string
+    // Generic secret bag for DB/REST credentials, e.g.
+    // { host, port, database, username, password } or { base_url, auth_header }.
+    extra?: Record<string, string>
+  }): Promise<CredentialSummary> => {
     const response = await fetch(`${API_URL}/credentials`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -350,6 +445,44 @@ export const credentialsApi = {
   delete: async (id: string): Promise<void> => {
     const response = await fetch(`${API_URL}/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' })
     if (!response.ok) throw new Error('Failed to delete credential')
+  },
+}
+
+
+// Data Source API — lets the builder UI test a Data Source node's config
+// against the real source (a few rows) before saving the flow.
+
+export interface DataSourceTestRequest {
+  source_type: string
+  operation?: 'fetch' | 'insert' | 'update' | 'delete'
+  query_mode?: 'simple' | 'sql'
+  credential_id?: string
+  table?: string
+  query?: string
+  endpoint?: string
+  base_url?: string
+  file_name?: string
+  filters?: Record<string, string>
+  values?: Record<string, string>
+  limit?: number
+}
+
+export interface DataSourceTestResult {
+  success: boolean
+  count: number
+  sample: Record<string, any>[]
+}
+
+export const dataSourceApi = {
+  test: async (data: DataSourceTestRequest): Promise<DataSourceTestResult> => {
+    const response = await fetch(`${API_URL}/data-sources/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    const payload = await response.json().catch(() => null)
+    if (!response.ok) throw new Error(payload?.detail || 'Data source test failed')
+    return payload
   },
 }
 

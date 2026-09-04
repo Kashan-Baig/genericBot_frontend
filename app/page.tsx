@@ -2061,11 +2061,27 @@ function Builder({
       )
 
 
-    setFlow({
+    const nextFlow = {
       ...flow,
-      nodes:
-        updatedNodes,
-    })
+      nodes: updatedNodes,
+    }
+
+    setFlow(nextFlow)
+
+    // WhatsApp credentials/provider must be persisted before Test Chat calls
+    // the backend by flow_id. Auto-save this node so the backend never runs
+    // an older Meta-only copy of the flow after the panel is saved.
+    if (selectedNode.type === 'whatsapp') {
+      flowApi.save(nextFlow)
+        .then((saved) => {
+          setEditingFlow(saved)
+          setSaveError(null)
+        })
+        .catch((err) => {
+          console.error('Failed to auto-save WhatsApp node:', err)
+          setSaveError(err?.message || 'Failed to save WhatsApp node')
+        })
+    }
   }
 
 
@@ -2511,6 +2527,7 @@ function Builder({
           <NodeConfigPanel
             node={selectedNode}
             availableNodes={flow.nodes}
+            flowId={flow.flow_id}
             onChange={updateNode}
             onClose={() =>
               setSelected(null)

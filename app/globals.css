@@ -510,7 +510,7 @@ textarea:focus-visible {
    NODE PALETTE
    ============================================================ */
 .palette {
-  width: 224px;
+  width: 200px;
   background: #fff;
   border-right: 1px solid var(--border);
   padding: 18px 14px;
@@ -575,7 +575,7 @@ textarea:focus-visible {
    CONFIG PANEL
    ============================================================ */
 .config-panel {
-  width: 320px;
+  width: 290px;
   background: #fff;
   border-left: 1px solid var(--border);
   display: flex;
@@ -594,7 +594,7 @@ textarea:focus-visible {
 .config-header h2 { font-size: 17px; margin: 6px 0 0; font-weight: 700; }
 
 .config-body {
-  padding: 20px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 18px;

@@ -11,7 +11,18 @@ export type NodeType =
   | 'condition'
   | 'switch'
   | 'ai'
+  | 'data_source'
+  | 'for_each'
+  | 'whatsapp'
   | 'end'
+
+
+// ============================================================
+// DATA SOURCE TYPES
+// ============================================================
+
+export type DataSourceType = 'postgresql' | 'mysql' | 'rest_api' | 'csv'
+export type DataOperation = 'fetch' | 'insert' | 'update' | 'delete'
 
 
 // ============================================================
@@ -51,6 +62,45 @@ export type FlowNodeConfig = {
   provider?: string
   credential_id?: string
   credential_name?: string
+
+  // Data Source / Database operation
+  operation?: DataOperation
+  /** Simple form builder or direct SQL editor for PostgreSQL/MySQL. */
+  query_mode?: 'simple' | 'sql'
+  source_type?: DataSourceType
+  table?: string
+  query?: string
+  endpoint?: string
+  base_url?: string
+  file_name?: string
+  filters?: Record<string, string>
+  /** Column/value pairs used by Insert and Update. Values may contain {{variables}}. */
+  values?: Record<string, string>
+  limit?: number
+  output_variable?: string
+  /** Transient only, used to build a credential inline. Never persisted. */
+  db_host?: string
+  db_port?: string
+  db_database?: string
+  db_username?: string
+  db_password?: string
+
+  // For Each — loop bookkeeping
+  input_variable?: string
+  item_variable?: string
+  index_variable?: string
+
+  // WhatsApp — recipient + message are templated, e.g. {{current_item.phone}}
+  channel_provider?: 'whatsapp' | '360dialog'
+  to?: string
+  message?: string
+  /** Transient only, used to build a WhatsApp credential inline. Never persisted. */
+  phone_number_id?: string
+  verify_token?: string
+  flow_id_for_replies?: string
+  dialog_environment?: 'sandbox' | 'production'
+  /** Default 360dialog sandbox recipient, stored in the credential. */
+  default_to_phone?: string
 }
 
 
@@ -81,6 +131,7 @@ export type FlowEdge = {
   source: string
   target: string
   label?: string
+  sourceHandle?: 'each' | 'done' | 'next'
 }
 
 
@@ -172,6 +223,24 @@ export const NODE_META: Record<
     tone: 'pink',
   },
 
+  data_source: {
+    label: 'Data Source',
+    description: 'Fetch, insert, update, or delete data',
+    tone: 'emerald',
+  },
+
+  for_each: {
+    label: 'For Each',
+    description: 'Iterate over a list',
+    tone: 'indigo',
+  },
+
+  whatsapp: {
+    label: 'WhatsApp',
+    description: 'Send a WhatsApp message',
+    tone: 'green',
+  },
+
   end: {
     label: 'End',
     description: 'Finish flow',
@@ -196,6 +265,9 @@ export const flowTypes = [
   'condition',
   'switch',
   'ai',
+  'data_source',
+  'for_each',
+  'whatsapp',
   'end',
 ] as const
 
@@ -242,6 +314,12 @@ export function createNode(
       condition: '',
     },
 
+    switch: {
+      label: 'Route by value',
+      variable: '',
+      cases: [],
+    },
+
     ai: {
       label: 'AI response',
       prompt: '',
@@ -251,6 +329,33 @@ export function createNode(
       api_key: '',
       model: 'gpt-4o-mini',
       provider: 'openai',
+    },
+
+    data_source: {
+      label: 'Database operation',
+      operation: 'fetch',
+      source_type: 'postgresql',
+      table: '',
+      filters: {},
+      values: {},
+      limit: 50,
+      output_variable: 'records',
+    },
+
+    for_each: {
+      label: 'For Each item',
+      input_variable: 'records',
+      item_variable: 'current_item',
+      index_variable: 'index',
+    },
+
+    whatsapp: {
+      label: 'Send WhatsApp message',
+      to: '',
+      message: '',
+      channel_provider: '360dialog',
+      dialog_environment: 'sandbox',
+      credential_id: '',
     },
 
     end: {
@@ -1155,19 +1260,31 @@ export const toneClasses: Record<
   pink:
     'border-pink-200 bg-pink-50 text-pink-700',
 
+  indigo:
+    'border-indigo-200 bg-indigo-50 text-indigo-700',
+
+  emerald:
+    'border-emerald-200 bg-emerald-50 text-emerald-700',
+
   slate:
     'border-slate-200 bg-slate-50 text-slate-600',
+
+  green:
+    'border-green-200 bg-green-50 text-green-700',
 }
 
 export const nodeToneClasses: Record<NodeType, string> = {
-  start:     toneClasses['violet'],
-  message:   toneClasses['blue'],
-  buttons:   toneClasses['teal'],
-  input:     toneClasses['amber'],
-  condition: toneClasses['orange'],
-  switch: toneClasses['indigo'],
-  ai:        toneClasses['pink'],
-  end:       toneClasses['slate'],
+  start:       toneClasses['violet'],
+  message:     toneClasses['blue'],
+  buttons:     toneClasses['teal'],
+  input:       toneClasses['amber'],
+  condition:   toneClasses['orange'],
+  switch:      toneClasses['indigo'],
+  ai:          toneClasses['pink'],
+  data_source: toneClasses['emerald'],
+  for_each:    toneClasses['indigo'],
+  whatsapp:    toneClasses['green'],
+  end:         toneClasses['slate'],
 }
 
 
@@ -1182,6 +1299,9 @@ export const nodeIcons: Record<
   condition: '⑂',
   switch: '⇄',
   ai: '✦',
+  data_source: '⛁',
+  for_each: '↻',
+  whatsapp: '☎',
   end: '◉',
 }
 
